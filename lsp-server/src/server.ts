@@ -1,5 +1,3 @@
-import { build } from 'esbuild'
-import { gzipSync } from 'node:zlib'
 import {
   createConnection,
   InlayHint,
@@ -15,7 +13,9 @@ import {
 } from 'vscode-languageserver-protocol'
 import { TextDocument } from 'vscode-languageserver-textdocument'
 
-const IMPORT_REGEX = /^import\s+(?:.*?\s+from\s+)?['"]([^'"]+)['"]/gm
+import { collectPackageImports } from './imports'
+import { measurePackageSizeKb as measurePackageBundleSizeKb } from './measure'
+
 const WARNING_THRESHOLD_KB = 100
 const DEBOUNCE_MS = 500
 
@@ -27,18 +27,6 @@ const pendingRefreshes = new Map<string, NodeJS.Timeout>()
 const docImportHints = new Map<string, InlayHint[]>()
 
 let workspaceRoot = process.cwd()
-
-function isNpmPackage(specifier: string): boolean {
-  return !specifier.startsWith('.') && !specifier.startsWith('/')
-}
-
-function extractPackageName(specifier: string): string {
-  if (specifier.startsWith('@')) {
-    return specifier.split('/').slice(0, 2).join('/')
-  }
-
-  return specifier.split('/')[0]
-}
 
 function parseWorkspaceRoot(params: InitializeParams): string {
   if (params.rootUri?.startsWith('file://')) {
@@ -59,59 +47,18 @@ function parseWorkspaceRoot(params: InitializeParams): string {
   return process.cwd()
 }
 
-function collectPackageImports(text: string): Array<{ line: number; packageName: string }> {
-  const imports: Array<{ line: number; packageName: string }> = []
-
-  for (const match of text.matchAll(IMPORT_REGEX)) {
-    const specifier = match[1]
-
-    if (!specifier || !isNpmPackage(specifier)) {
-      continue
-    }
-
-    const packageName = extractPackageName(specifier)
-    const uptoMatch = text.slice(0, match.index ?? 0)
-    const line = uptoMatch.length === 0 ? 0 : uptoMatch.split('\n').length - 1
-
-    imports.push({ line, packageName })
-  }
-
-  return imports
-}
-
 async function measurePackageSizeKb(packageName: string): Promise<number | null> {
   const cached = importSizeCache.get(packageName)
   if (cached !== undefined) {
     return cached
   }
 
-  try {
-    const result = await build({
-      stdin: {
-        contents: `import * as __import_size_ns from '${packageName}'; void __import_size_ns;`,
-        loader: 'js',
-        resolveDir: workspaceRoot,
-      },
-      bundle: true,
-      write: false,
-      minify: true,
-      treeShaking: false,
-      platform: 'browser',
-      logLevel: 'silent',
-    })
-
-    const output = result.outputFiles?.[0]
-    if (!output) {
-      return null
-    }
-
-    const gzippedBytes = gzipSync(output.contents).byteLength
-    const sizeKb = Number((gzippedBytes / 1024).toFixed(1))
+  const sizeKb = await measurePackageBundleSizeKb({ packageName, workspaceRoot })
+  if (sizeKb !== null) {
     importSizeCache.set(packageName, sizeKb)
-    return sizeKb
-  } catch {
-    return null
   }
+
+  return sizeKb
 }
 
 async function computeInlayHintsForDocument(document: TextDocument): Promise<void> {
