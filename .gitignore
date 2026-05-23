@@ -1,0 +1,4 @@
+target/
+release/
+lsp-server/node_modules/
+.DS_Store
