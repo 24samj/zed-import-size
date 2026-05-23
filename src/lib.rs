@@ -31,15 +31,21 @@ fn path_to_string(path: PathBuf) -> String {
 fn resolve_lsp_entry() -> ZedResult<PathBuf> {
     let extension_root = std::env::current_dir().map_err(|error| error.to_string())?;
 
-    let root_str = extension_root.to_string_lossy();
-    if root_str.contains("/extensions/work/import-size") {
-        let installed_root_str = root_str.replace("/extensions/work/import-size", "/extensions/installed/import-size");
-        return Ok(
-            PathBuf::from(installed_root_str)
+    // Cross-platform fallback: if running from `<extensions>/work/<id>`, resolve
+    // to `<extensions>/installed/<id>`.
+    if let (Some(extension_id), Some(work_dir), Some(extensions_dir)) = (
+        extension_root.file_name(),
+        extension_root.parent(),
+        extension_root.parent().and_then(|parent| parent.parent()),
+    ) {
+        if work_dir.file_name().is_some_and(|name| name == "work") {
+            return Ok(extensions_dir
+                .join("installed")
+                .join(extension_id)
                 .join("lsp-server")
                 .join("dist")
-                .join("server.js"),
-        );
+                .join("server.js"));
+        }
     }
 
     Ok(extension_root.join("lsp-server").join("dist").join("server.js"))
