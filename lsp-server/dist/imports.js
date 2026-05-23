@@ -5,6 +5,8 @@ exports.extractPackageName = extractPackageName;
 exports.collectPackageImports = collectPackageImports;
 const SIDE_EFFECT_IMPORT_REGEX = /^\s*import\s*['"]([^'"]+)['"]\s*$/m;
 const FROM_IMPORT_REGEX = /^\s*import(?:\s+type)?[\s\S]*?\s+from\s+['"]([^'"]+)['"]\s*$/m;
+const IMPORT_CLAUSE_REGEX = /^\s*import\s+([\s\S]+?)\s+from\s+['"][^'"]+['"]\s*$/m;
+const IDENTIFIER_REGEX = /^[A-Za-z_$][\w$]*$/;
 function isNpmPackage(specifier) {
     if (specifier.startsWith('.') || specifier.startsWith('/')) {
         return false;
@@ -19,6 +21,76 @@ function extractPackageName(specifier) {
         return specifier.split('/').slice(0, 2).join('/');
     }
     return specifier.split('/')[0];
+}
+function isTypeOnlyImport(statement) {
+    return /^import\s+type\b/.test(statement.trim());
+}
+function normalizeImportStatement(statement) {
+    const trimmed = statement.trim();
+    return trimmed.endsWith(';') ? trimmed : `${trimmed};`;
+}
+function extractImportClause(statement) {
+    return statement.match(IMPORT_CLAUSE_REGEX)?.[1]?.trim() ?? null;
+}
+function isEmptyNamedImport(statement) {
+    return extractImportClause(statement)?.replace(/\s/g, '') === '{}';
+}
+function extractNamedBinding(specifier) {
+    const trimmed = specifier.trim();
+    if (!trimmed || trimmed.startsWith('type ')) {
+        return null;
+    }
+    const aliasMatch = trimmed.match(/\bas\s+([A-Za-z_$][\w$]*)$/);
+    if (aliasMatch) {
+        return aliasMatch[1];
+    }
+    const nameMatch = trimmed.match(/^([A-Za-z_$][\w$]*)/);
+    return nameMatch?.[1] ?? null;
+}
+function extractRuntimeBindings(statement) {
+    const clause = extractImportClause(statement);
+    if (!clause) {
+        return [];
+    }
+    const bindings = [];
+    const namespaceMatch = clause.match(/^\*\s+as\s+([A-Za-z_$][\w$]*)$/);
+    if (namespaceMatch) {
+        bindings.push(namespaceMatch[1]);
+    }
+    const defaultMatch = clause.match(/^([A-Za-z_$][\w$]*)(?:\s*,|\s*$)/);
+    if (defaultMatch) {
+        bindings.push(defaultMatch[1]);
+    }
+    const namedBlock = clause.match(/\{([\s\S]*)\}/)?.[1];
+    if (namedBlock !== undefined) {
+        for (const namedSpecifier of namedBlock.split(',')) {
+            const binding = extractNamedBinding(namedSpecifier);
+            if (binding) {
+                bindings.push(binding);
+            }
+        }
+    }
+    return [...new Set(bindings)].filter((binding) => IDENTIFIER_REGEX.test(binding));
+}
+function createMeasurementSource(statement, isSideEffectImport) {
+    if (isTypeOnlyImport(statement)) {
+        return null;
+    }
+    const importStatement = normalizeImportStatement(statement);
+    if (isSideEffectImport) {
+        return importStatement;
+    }
+    const bindings = extractRuntimeBindings(statement);
+    if (bindings.length === 0) {
+        if (isEmptyNamedImport(statement)) {
+            return importStatement;
+        }
+        return null;
+    }
+    return [
+        importStatement,
+        `globalThis.__import_size_used = [${bindings.join(', ')}];`,
+    ].join('\n');
 }
 function collectPackageImports(text) {
     const imports = [];
@@ -37,10 +109,19 @@ function collectPackageImports(text) {
             offset += statement.length + 1;
             continue;
         }
-        const uptoStatement = text.slice(0, offset);
-        const line = uptoStatement.length === 0 ? 0 : uptoStatement.split('\n').length;
+        const measurementSource = createMeasurementSource(statement, sideEffectMatch !== null);
+        if (!measurementSource) {
+            offset += statement.length + 1;
+            continue;
+        }
+        const specifierIndex = statement.indexOf(specifier);
+        const hintOffset = specifierIndex === -1 ? offset : offset + specifierIndex;
+        const uptoHintLine = text.slice(0, hintOffset);
+        const line = uptoHintLine.length === 0 ? 0 : uptoHintLine.split('\n').length - 1;
         imports.push({
+            cacheKey: `${extractPackageName(specifier)}|${measurementSource}`,
             line,
+            measurementSource,
             packageName: extractPackageName(specifier),
             specifier,
         });

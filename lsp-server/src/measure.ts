@@ -81,11 +81,13 @@ function flowStripNodeModulesPlugin(): Plugin {
 }
 
 export interface MeasurePackageSizeOptions {
+  measurementSource: string
   packageName: string
   workspaceRoot: string
 }
 
 export async function measurePackageSizeKb({
+  measurementSource,
   packageName,
   workspaceRoot,
 }: MeasurePackageSizeOptions): Promise<number | null> {
@@ -112,14 +114,14 @@ export async function measurePackageSizeKb({
     try {
       const result = await build({
         stdin: {
-          contents: `import * as __import_size_ns from '${packageName}'; void __import_size_ns;`,
-          loader: 'js',
+          contents: measurementSource,
+          loader: 'tsx',
           resolveDir: workspaceRoot,
         },
         bundle: true,
         write: false,
         minify: true,
-        treeShaking: false,
+        treeShaking: true,
         platform: attempt.platform,
         logLevel: 'silent',
         ...attempt.resolveOptions,

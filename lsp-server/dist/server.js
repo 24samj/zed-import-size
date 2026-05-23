@@ -28,14 +28,18 @@ function parseWorkspaceRoot(params) {
     }
     return process.cwd();
 }
-async function measurePackageSizeKb(packageName) {
-    const cached = importSizeCache.get(packageName);
+async function measureImportSizeKb(entry) {
+    const cached = importSizeCache.get(entry.cacheKey);
     if (cached !== undefined) {
         return cached;
     }
-    const sizeKb = await (0, measure_1.measurePackageSizeKb)({ packageName, workspaceRoot });
+    const sizeKb = await (0, measure_1.measurePackageSizeKb)({
+        measurementSource: entry.measurementSource,
+        packageName: entry.packageName,
+        workspaceRoot,
+    });
     if (sizeKb !== null) {
-        importSizeCache.set(packageName, sizeKb);
+        importSizeCache.set(entry.cacheKey, sizeKb);
     }
     return sizeKb;
 }
@@ -43,7 +47,7 @@ async function computeInlayHintsForDocument(document) {
     const imports = (0, imports_1.collectPackageImports)(document.getText());
     const hints = [];
     for (const entry of imports) {
-        const sizeKb = await measurePackageSizeKb(entry.packageName);
+        const sizeKb = await measureImportSizeKb(entry);
         if (sizeKb === null) {
             continue;
         }

@@ -13,7 +13,7 @@ import {
 } from 'vscode-languageserver-protocol'
 import { TextDocument } from 'vscode-languageserver-textdocument'
 
-import { collectPackageImports } from './imports'
+import { collectPackageImports, type PackageImport } from './imports'
 import { measurePackageSizeKb as measurePackageBundleSizeKb } from './measure'
 
 const WARNING_THRESHOLD_KB = 100
@@ -47,15 +47,19 @@ function parseWorkspaceRoot(params: InitializeParams): string {
   return process.cwd()
 }
 
-async function measurePackageSizeKb(packageName: string): Promise<number | null> {
-  const cached = importSizeCache.get(packageName)
+async function measureImportSizeKb(entry: PackageImport): Promise<number | null> {
+  const cached = importSizeCache.get(entry.cacheKey)
   if (cached !== undefined) {
     return cached
   }
 
-  const sizeKb = await measurePackageBundleSizeKb({ packageName, workspaceRoot })
+  const sizeKb = await measurePackageBundleSizeKb({
+    measurementSource: entry.measurementSource,
+    packageName: entry.packageName,
+    workspaceRoot,
+  })
   if (sizeKb !== null) {
-    importSizeCache.set(packageName, sizeKb)
+    importSizeCache.set(entry.cacheKey, sizeKb)
   }
 
   return sizeKb
@@ -66,7 +70,7 @@ async function computeInlayHintsForDocument(document: TextDocument): Promise<voi
 
   const hints: InlayHint[] = []
   for (const entry of imports) {
-    const sizeKb = await measurePackageSizeKb(entry.packageName)
+    const sizeKb = await measureImportSizeKb(entry)
     if (sizeKb === null) {
       continue
     }

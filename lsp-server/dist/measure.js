@@ -73,7 +73,7 @@ function flowStripNodeModulesPlugin() {
         },
     };
 }
-async function measurePackageSizeKb({ packageName, workspaceRoot, }) {
+async function measurePackageSizeKb({ measurementSource, packageName, workspaceRoot, }) {
     const buildAttempts = [
         { platform: 'browser' },
         { platform: 'neutral' },
@@ -90,14 +90,14 @@ async function measurePackageSizeKb({ packageName, workspaceRoot, }) {
         try {
             const result = await (0, esbuild_1.build)({
                 stdin: {
-                    contents: `import * as __import_size_ns from '${packageName}'; void __import_size_ns;`,
-                    loader: 'js',
+                    contents: measurementSource,
+                    loader: 'tsx',
                     resolveDir: workspaceRoot,
                 },
                 bundle: true,
                 write: false,
                 minify: true,
-                treeShaking: false,
+                treeShaking: true,
                 platform: attempt.platform,
                 logLevel: 'silent',
                 ...attempt.resolveOptions,
